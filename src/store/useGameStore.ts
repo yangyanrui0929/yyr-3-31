@@ -11,12 +11,26 @@ import {
 import { calculatePowerNetwork, countPoweredBuildings } from '../utils/powerCalculator';
 
 const STORAGE_KEY = 'floating-island-grid-game-save';
+const BACKUPS_KEY = 'floating-island-grid-game-backups';
+const MAX_BACKUPS = 5;
 
 interface PersistedState {
   grid: GridCell[][];
   dayTime: number;
   storedPower: number;
   satisfaction: number;
+  lastSavedAt: number;
+}
+
+interface BackupSave {
+  id: string;
+  grid: GridCell[][];
+  dayTime: number;
+  storedPower: number;
+  satisfaction: number;
+  buildingCount: number;
+  savedAt: number;
+  name: string;
 }
 
 interface GameState {
@@ -30,6 +44,8 @@ interface GameState {
   totalGeneration: number;
   totalConsumption: number;
   showSettlement: boolean;
+  showSaveManagement: boolean;
+  lastSavedAt: number;
   setSelectedTool: (tool: ToolType) => void;
   placeOrRemove: (x: number, y: number) => void;
   rotateCell: (x: number, y: number) => void;
@@ -38,6 +54,12 @@ interface GameState {
   resetGame: () => void;
   openSettlement: () => void;
   closeSettlement: () => void;
+  openSaveManagement: () => void;
+  closeSaveManagement: () => void;
+  saveBackup: (name?: string) => BackupSave | null;
+  loadBackup: (id: string) => void;
+  listBackups: () => BackupSave[];
+  deleteBackup: (id: string) => void;
 }
 
 function createEmptyGrid(): GridCell[][] {
@@ -66,6 +88,7 @@ function saveToLocalStorage(state: PersistedState): void {
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      lastSavedAt: state.lastSavedAt,
     });
     localStorage.setItem(STORAGE_KEY, data);
   } catch {
@@ -84,12 +107,43 @@ function loadFromLocalStorage(): PersistedState | null {
         dayTime: data.dayTime ?? 20,
         storedPower: data.storedPower ?? 10,
         satisfaction: data.satisfaction ?? 50,
+        lastSavedAt: data.lastSavedAt ?? Date.now(),
       };
     }
   } catch {
     // ignore parse errors
   }
   return null;
+}
+
+function countBuildings(grid: GridCell[][]): number {
+  let count = 0;
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (grid[y][x].type !== 'empty') count++;
+    }
+  }
+  return count;
+}
+
+function loadBackupsFromStorage(): BackupSave[] {
+  try {
+    const raw = localStorage.getItem(BACKUPS_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    if (Array.isArray(data)) return data;
+  } catch {
+    // ignore parse errors
+  }
+  return [];
+}
+
+function saveBackupsToStorage(backups: BackupSave[]): void {
+  try {
+    localStorage.setItem(BACKUPS_KEY, JSON.stringify(backups));
+  } catch {
+    // ignore storage errors
+  }
 }
 
 function recalcGrid(grid: GridCell[][], dayTime: number, storedPower: number) {
@@ -112,6 +166,7 @@ function initGame(): Omit<GameState, keyof GameStateActions> {
   const dayTime = saved ? saved.dayTime : 20;
   const storedPower = saved ? saved.storedPower : 10;
   const satisfaction = saved ? saved.satisfaction : 50;
+  const lastSavedAt = saved ? saved.lastSavedAt : Date.now();
 
   const { newGrid, poweredCells, totalGeneration, totalConsumption, batteryCapacity } =
     recalcGrid(grid, dayTime, storedPower);
@@ -127,6 +182,8 @@ function initGame(): Omit<GameState, keyof GameStateActions> {
     totalGeneration,
     totalConsumption,
     showSettlement: false,
+    showSaveManagement: false,
+    lastSavedAt,
   };
 }
 
@@ -140,6 +197,12 @@ type GameStateActions = Pick<
   | 'resetGame'
   | 'openSettlement'
   | 'closeSettlement'
+  | 'openSaveManagement'
+  | 'closeSaveManagement'
+  | 'saveBackup'
+  | 'loadBackup'
+  | 'listBackups'
+  | 'deleteBackup'
 >;
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -183,14 +246,16 @@ export const useGameStore = create<GameState>((set, get) => ({
       maxStorage: result.batteryCapacity,
     };
 
+    const now = Date.now();
     saveToLocalStorage({
       grid: result.newGrid,
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      lastSavedAt: now,
     });
 
-    set(nextState);
+    set({ ...nextState, lastSavedAt: now });
   },
 
   rotateCell: (x, y) => {
@@ -211,14 +276,16 @@ export const useGameStore = create<GameState>((set, get) => ({
       maxStorage: result.batteryCapacity,
     };
 
+    const now = Date.now();
     saveToLocalStorage({
       grid: result.newGrid,
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      lastSavedAt: now,
     });
 
-    set(nextState);
+    set({ ...nextState, lastSavedAt: now });
   },
 
   repairCell: (x, y) => {
@@ -239,14 +306,16 @@ export const useGameStore = create<GameState>((set, get) => ({
       maxStorage: result.batteryCapacity,
     };
 
+    const now = Date.now();
     saveToLocalStorage({
       grid: result.newGrid,
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      lastSavedAt: now,
     });
 
-    set(nextState);
+    set({ ...nextState, lastSavedAt: now });
   },
 
   tick: () => {
@@ -304,11 +373,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       newSatisfaction = Math.max(0, state.satisfaction - 0.3);
     }
 
+    const now = Date.now();
     saveToLocalStorage({
       grid: newGrid,
       dayTime: newDayTime,
       storedPower: newStoredPower,
       satisfaction: newSatisfaction,
+      lastSavedAt: now,
     });
 
     set({
@@ -320,6 +391,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       poweredCells,
       totalGeneration,
       totalConsumption,
+      lastSavedAt: now,
     });
   },
 
@@ -327,6 +399,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     localStorage.removeItem(STORAGE_KEY);
     const fresh = createEmptyGrid();
     const result = recalcGrid(fresh, 20, 10);
+    const now = Date.now();
     set({
       grid: result.newGrid,
       dayTime: 20,
@@ -338,9 +411,79 @@ export const useGameStore = create<GameState>((set, get) => ({
       totalGeneration: result.totalGeneration,
       totalConsumption: result.totalConsumption,
       showSettlement: false,
+      showSaveManagement: false,
+      lastSavedAt: now,
     });
   },
 
   openSettlement: () => set({ showSettlement: true }),
   closeSettlement: () => set({ showSettlement: false }),
+
+  openSaveManagement: () => set({ showSaveManagement: true }),
+  closeSaveManagement: () => set({ showSaveManagement: false }),
+
+  saveBackup: (name) => {
+    const state = get();
+    const backups = loadBackupsFromStorage();
+    const buildingCount = countBuildings(state.grid);
+    const now = Date.now();
+    const backupName = name || `存档 ${backups.length + 1}`;
+
+    const newBackup: BackupSave = {
+      id: `backup-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      grid: state.grid.map((row) => row.map((c) => ({ ...c }))),
+      dayTime: state.dayTime,
+      storedPower: state.storedPower,
+      satisfaction: state.satisfaction,
+      buildingCount,
+      savedAt: now,
+      name: backupName,
+    };
+
+    backups.unshift(newBackup);
+    const trimmed = backups.slice(0, MAX_BACKUPS);
+    saveBackupsToStorage(trimmed);
+
+    return newBackup;
+  },
+
+  loadBackup: (id) => {
+    const backups = loadBackupsFromStorage();
+    const backup = backups.find((b) => b.id === id);
+    if (!backup) return;
+
+    const result = recalcGrid(backup.grid, backup.dayTime, backup.storedPower);
+    const now = Date.now();
+
+    saveToLocalStorage({
+      grid: result.newGrid,
+      dayTime: backup.dayTime,
+      storedPower: backup.storedPower,
+      satisfaction: backup.satisfaction,
+      lastSavedAt: now,
+    });
+
+    set({
+      grid: result.newGrid,
+      dayTime: backup.dayTime,
+      storedPower: backup.storedPower,
+      maxStorage: result.batteryCapacity,
+      satisfaction: backup.satisfaction,
+      poweredCells: result.poweredCells,
+      totalGeneration: result.totalGeneration,
+      totalConsumption: result.totalConsumption,
+      lastSavedAt: now,
+      showSaveManagement: false,
+    });
+  },
+
+  listBackups: () => {
+    return loadBackupsFromStorage();
+  },
+
+  deleteBackup: (id) => {
+    const backups = loadBackupsFromStorage();
+    const filtered = backups.filter((b) => b.id !== id);
+    saveBackupsToStorage(filtered);
+  },
 }));

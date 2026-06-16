@@ -4,7 +4,7 @@ import { TOOLS } from '../utils/constants';
 import { RotateCw } from 'lucide-react';
 
 export const Toolbar: React.FC = () => {
-  const { selectedTool, setSelectedTool, resetGame, openSettlement } = useGameStore();
+  const { selectedTool, setSelectedTool, openSettlement, openSaveManagement } = useGameStore();
 
   return (
     <div className="flex flex-col gap-3">
@@ -64,7 +64,14 @@ export const Toolbar: React.FC = () => {
       </button>
 
       <button
-        onClick={resetGame}
+        onClick={openSaveManagement}
+        className="bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition-all duration-200 hover:scale-105"
+      >
+        💾 存档管理
+      </button>
+
+      <button
+        onClick={openSaveManagement}
         className="bg-gradient-to-r from-red-400 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition-all duration-200 hover:scale-105"
       >
         🔄 重新开始
